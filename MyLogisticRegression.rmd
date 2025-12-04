@@ -1,0 +1,148 @@
+---
+title: "3D Logistic Regression: Glucose and Age Predicting CHD"
+output: 
+  html_document:
+    theme: cerulean
+    code_folding: hide
+---
+
+```{r setup, warning=FALSE, message=FALSE}
+library(mosaic)
+library(ResourceSelection) 
+library(readr)
+library(tidyverse)
+library(tidyr)
+library(pander)
+library(dplyr)
+library(car)
+library(plotly)
+library(reshape2)
+
+mydf <- read_csv("../../Analyses/Logistic Regression/framingham.csv")
+
+```
+
+## Background
+
+This analysis extends the simple logistic regression to 3D by using both glucose levels and age to predict 10-year CHD risk. By visualizing the logistic regression surface in three dimensions, we can better understand how these two predictors jointly influence the probability of developing coronary heart disease.
+
+**Research Question**: Can glucose levels and age together predict the 10-year risk of coronary heart disease (CHD)?
+
+## 2D Logistic Regression (Original)
+
+```{r 2d_logistic, warning=FALSE, message=FALSE}
+# Simple logistic regression with just glucose
+myglm <- glm(TenYearCHD ~ glucose, data=mydf, family=binomial)
+mysummary <- summary(myglm)
+b <- coef(myglm)
+colors <- ifelse(mydf$TenYearCHD == 1, "lightcoral", "lightblue")
+
+# Scatter plot
+plot(TenYearCHD ~ glucose, data = mydf, col = colors, pch = 16,
+     main = "2D Logistic Regression: Glucose vs CHD")
+curve(exp(b[1] + b[2]*x) / (1 + exp(b[1] + b[2]*x)), 
+      add=TRUE, col = "black", lwd=2)
+```
+
+```{r}
+pander(mysummary)
+```
+
+## 3D Logistic Regression
+
+Now we'll add age as a second predictor and visualize the logistic regression surface in 3D.
+
+```{r 3d_logistic, warning=FALSE, message=FALSE}
+# Remove rows with missing values
+mydf_clean <- mydf %>% 
+  filter(!is.na(glucose) & !is.na(age) & !is.na(TenYearCHD))
+
+myglm_3d <- glm(TenYearCHD ~ glucose + age, data=mydf_clean, family=binomial)
+
+
+pander(summary(myglm_3d))
+```
+
+```{r 3d_plot, warning=FALSE, message=FALSE}
+# Get coefficients
+coefs <- coef(myglm_3d)
+
+# Graph Resolution
+graph_reso_glucose <- 5
+graph_reso_age <- 2
+
+# Setup Axis ranges
+axis_glucose <- seq(min(mydf_clean$glucose), max(mydf_clean$glucose), 
+                    by = graph_reso_glucose)
+axis_age <- seq(min(mydf_clean$age), max(mydf_clean$age), 
+                by = graph_reso_age)
+
+# Create grid of points for surface
+surface_data <- expand.grid(glucose = axis_glucose, 
+                            age = axis_age, 
+                            KEEP.OUT.ATTRS = FALSE)
+
+# Calculate predicted probabilities using logistic function
+surface_data$prob <- predict(myglm_3d, newdata = surface_data, type = "response")
+
+# Reshape for surface plot
+prob_surface <- acast(surface_data, age ~ glucose, value.var = "prob")
+
+# Create colors for points (CHD = 1 in red, CHD = 0 in blue)
+point_colors <- ifelse(mydf_clean$TenYearCHD == 1, "red", "blue")
+
+# Create 3D scatterplot with logistic regression surface
+plot_ly() %>%
+  # Add the data points
+  add_trace(data = mydf_clean,
+            x = ~glucose, 
+            y = ~age, 
+            z = ~TenYearCHD,
+            type = "scatter3d", 
+            mode = "markers",
+            marker = list(size = 3, 
+                         color = point_colors,
+                         opacity = 0.7),
+            name = "Observed Data",
+            hovertemplate = paste('<b>Glucose:</b> %{x:.1f}<br>',
+                                '<b>Age:</b> %{y:.0f}<br>',
+                                '<b>CHD:</b> %{z}<br>',
+                                '<extra></extra>')) %>%
+  # Add the logistic regression surface
+  add_trace(z = prob_surface,
+            x = axis_glucose,
+            y = axis_age,
+            type = "surface",
+            opacity = 0.7,
+            colorscale = list(c(0, "lightblue"), c(1, "lightcoral")),
+            name = "Predicted Probability",
+            hovertemplate = paste('<b>Glucose:</b> %{x:.1f}<br>',
+                                '<b>Age:</b> %{y:.0f}<br>',
+                                '<b>P(CHD):</b> %{z:.3f}<br>',
+                                '<extra></extra>')) %>%
+  layout(scene = list(
+    xaxis = list(title = "Glucose Level"),
+    yaxis = list(title = "Age"),
+    zaxis = list(title = "Probability of CHD", range = c(0, 1)),
+    camera = list(eye = list(x = 1.5, y = 1.5, z = 1.3))
+  ),
+  title = "3D Logistic Regression: Glucose & Age Predicting CHD")
+```
+
+## Interpretation
+
+The 3D surface shows the predicted probability of developing CHD based on glucose levels and age. The surface uses a logistic function:
+
+$$P(CHD = 1) = \frac{1}{1 + e^{-(\beta_0 + \beta_1 \cdot glucose + \beta_2 \cdot age)}}$$
+
+- **Blue points** represent individuals without CHD (TenYearCHD = 0)
+- **Red points** represent individuals who developed CHD (TenYearCHD = 1)
+- The **surface** shows the predicted probability, with colors ranging from blue (low probability) to red (high probability)
+
+You can rotate the plot by clicking and dragging to view from different angles.
+
+```{r model_diagnostics}
+# Hosmer-Lemeshow goodness of fit test
+hl_test <- hoslem.test(myglm_3d$y, fitted(myglm_3d))
+pander(hl_test)
+```
